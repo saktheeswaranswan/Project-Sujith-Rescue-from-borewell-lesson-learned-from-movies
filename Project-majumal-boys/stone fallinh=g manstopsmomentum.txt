@@ -1,0 +1,360 @@
+// p5.js sketch: circular stone rolling down an incline and a muscular Tamil man standing downhill to stop it
+// - Shows contact forces only while in contact
+// - Blue vector: reaction force (force exerted on stone by man)
+// - Red vector: action force (equal & opposite on man)
+// - Orange vector: velocity of stone
+// - Purple vector: momentum (p = m * v)
+// Controls shown on-screen. Paste into the p5.js web editor (https://editor.p5js.org/) or into an HTML file that loads p5.js.
+
+let slopeAngle; // radians
+let slopeStart, slopeLength;
+let stone; // object for circular stone
+let man; // object for the muscular Tamil man (simple body)
+let g = 9.81; // gravity
+let contact = false;
+
+function setup() {
+  createCanvas(900, 500);
+  angleMode(RADIANS);
+  // slope parameters
+  slopeAngle = radians(18); // gentle incline
+  slopeStart = createVector(100, 120);
+  slopeLength = 680;
+
+  // stone initial position: near top of slope
+  let x0 = slopeStart.x + 40;
+  let y0 = slopeStart.y + tan(slopeAngle) * 40;
+  stone = {
+    pos: createVector(x0, y0),
+    radius: 22,
+    mass: 6.0, // kg
+    vel: createVector(0, 0),
+    acc: createVector(0, 0),
+    friction: 0.02,
+    restitution: 0.2
+  };
+
+  // man stands downhill near bottom-of-slope end
+  // We'll represent him as a polygon (simple shapes) placed slightly right and down from slope end
+  let slopeEnd = slopePointAt(1);
+  man = {
+    base: slopeEnd.copy().add(40, 30),
+    width: 48,
+    height: 120,
+    // simple physics body for collision (axis-aligned rectangle)
+    rect: null
+  };
+  updateManRect();
+
+  textFont('Georgia');
+}
+
+function slopePointAt(t) {
+  // t from 0..1 along slope
+  return createVector(
+    slopeStart.x + cos(slopeAngle) * slopeLength * t,
+    slopeStart.y + sin(slopeAngle) * slopeLength * t
+  );
+}
+
+function updateManRect(){
+  // rectangle positioned so the man's feet touch the ground (downhill)
+  man.rect = {
+    x: man.base.x - man.width/2,
+    y: man.base.y - man.height,
+    w: man.width,
+    h: man.height
+  };
+}
+
+function draw() {
+  background(250);
+  drawSlope();
+  drawMan();
+  physicsStep();
+  drawStone();
+  drawHUD();
+}
+
+function drawSlope() {
+  stroke(60);
+  strokeWeight(2);
+  let a = slopeStart;
+  let b = slopePointAt(1);
+  line(a.x, a.y, b.x, b.y);
+  // draw little ticks along slope
+  for (let t = 0; t <= 1; t += 0.06) {
+    let p = slopePointAt(t);
+    let perp = p5.Vector.sub(p, slopePointAt(t+0.001)).rotate(HALF_PI).setMag(6);
+    line(p.x - perp.x, p.y - perp.y, p.x + perp.x, p.y + perp.y);
+  }
+}
+
+function drawMan() {
+  // stylized muscular Tamil man facing uphill (left)
+  push();
+  translate(man.base.x, man.base.y - man.height);
+  // body
+  noStroke();
+  // shorts
+  fill(20, 50, 100);
+  rectMode(CORNER);
+  rect(-man.width/2, man.height-28, man.width, 28);
+  // legs
+  fill(170, 120, 90);
+  rect(-man.width/2 + 6, man.height-28, 12, 40);
+  rect(man.width/2 - 18, man.height-28, 12, 40);
+  // torso (muscular)
+  fill(200, 140, 100);
+  beginShape();
+  vertex(-man.width/2 + 6, man.height-28-6);
+  vertex(-man.width/2 + 20, -10);
+  vertex(man.width/2 - 20, -10);
+  vertex(man.width/2 - 6, man.height-28-6);
+  endShape(CLOSE);
+  // broad shoulders / arms pushing
+  fill(200, 140, 100);
+  ellipse(-man.width/2 + 18, -18, 26, 26); // left shoulder
+  ellipse(man.width/2 - 18, -18, 26, 26); // right shoulder
+  // head
+  fill(190, 120, 90);
+  ellipse(0, -man.height+30, 30, 34);
+  // simple hair and mustache to hint Tamil features
+  fill(30);
+  arc(0, -man.height+22, 28, 14, PI, TWO_PI);
+  // arms drawn as if bracing against the stone
+  pop();
+}
+
+function physicsStep() {
+  // reset contact
+  contact = false;
+
+  // gravity along slope: acceleration g * sin(theta)
+  let g_along = g * sin(slopeAngle);
+  // direction vector along slope (unit, downhill)
+  let slopeDir = createVector(cos(slopeAngle), sin(slopeAngle)).normalize();
+  // gravity acceleration vector
+  let a_g = slopeDir.copy().mult(g_along);
+
+  // friction/rolling resistance (opposes motion)
+  let frictionAcc = stone.vel.copy().mult(-stone.friction / stone.mass);
+
+  // update acceleration and velocity (simple explicit Euler)
+  stone.acc = a_g.copy().add(frictionAcc);
+  stone.vel.add(p5.Vector.mult(stone.acc, 1/60.0));
+
+  // update position along slope coordinates: convert vel in slope frame to screen
+  stone.pos.add(p5.Vector.mult(stone.vel, 1/60.0));
+
+  // detect contact between stone and man rectangle
+  if (circleRectCollision(stone.pos.x, stone.pos.y, stone.radius, man.rect)) {
+    contact = true;
+    // compute contact normal (from man to stone) roughly
+    // find closest point on rect to circle center
+    let closest = closestPointOnRect(stone.pos, man.rect);
+    let normal = p5.Vector.sub(stone.pos, closest);
+    let dist = normal.mag();
+    if (dist === 0) normal = createVector(0, -1);
+    else normal.normalize();
+
+    // penetration depth
+    let penetration = stone.radius - dist;
+    if (penetration < 0) penetration = 0;
+
+    // contact spring force (simple penalty): F = k * penetration - c*v_rel_normal
+    let k = 1200; // spring stiffness
+    let c = 60; // damping
+    // relative velocity along normal (stone vs man(immobile))
+    let vRel = stone.vel.copy();
+    let vRelNormal = vRel.dot(normal);
+    let Fmag = max(0, k * penetration - c * vRelNormal);
+
+    // apply force on stone (reaction force by man on stone) => direction = normal
+    let F = p5.Vector.mult(normal, Fmag);
+    // acceleration from contact
+    let a_contact = p5.Vector.mult(F, 1 / stone.mass);
+    // apply impulse-like correction to velocity to reduce penetration
+    stone.vel.add(p5.Vector.mult(a_contact, 1/stone.mass));
+
+    // also apply positional correction to avoid sinking
+    stone.pos.add(p5.Vector.mult(normal, penetration + 0.1));
+
+    // simple restitution: bounce along normal
+    let vn = stone.vel.dot(normal);
+    if (vn < 0) {
+      stone.vel.sub(p5.Vector.mult(normal, (1 + stone.restitution) * vn));
+    }
+
+    // store contact info for drawing vectors
+    stone.contactInfo = {
+      point: closest.copy(),
+      normal: normal.copy(),
+      force: F.copy(),
+      magnitude: Fmag
+    };
+  } else {
+    stone.contactInfo = null;
+  }
+
+  // small clamp to keep stone on/near slope path
+  keepStoneOnSlope();
+}
+
+function drawStone() {
+  push();
+  translate(0,0);
+  // stone body
+  fill(120);
+  stroke(40);
+  strokeWeight(1);
+  ellipse(stone.pos.x, stone.pos.y, stone.radius*2);
+
+  // velocity vector (orange)
+  let vel = stone.vel.copy();
+  if (vel.mag() > 0.01) {
+    let vdisplay = vel.copy().setMag(map(vel.mag(), 0, 80, 0, 80));
+    drawArrow(createVector(stone.pos.x, stone.pos.y), vdisplay, 'orange', 'v');
+  }
+
+  // momentum vector p = m * v (purple) - scale for display
+  let pvec = stone.vel.copy().mult(stone.mass);
+  if (pvec.mag() > 0.01) {
+    let pdisplay = pvec.copy().setMag(map(pvec.mag(), 0, 500, 0, 100));
+    drawArrow(createVector(stone.pos.x, stone.pos.y), pdisplay, 'purple', 'p');
+  }
+
+  // contact forces (only when in contact)
+  if (stone.contactInfo) {
+    let info = stone.contactInfo;
+    // reaction on stone by man: BLUE vector (pointing away from man into stone)
+    let react = info.force.copy().setMag(map(info.magnitude, 0, 3000, 0, 120));
+    drawArrow(info.point, react, color(40,140,255), 'F_react');
+
+    // equal and opposite: action on man by stone -> RED vector at contact point on man
+    let action = react.copy().mult(-1);
+    drawArrow(info.point, action, color(255,60,60), 'F_action');
+
+    // show magnitude text near arrow
+    noStroke();
+    fill(0);
+    textSize(13);
+    textAlign(LEFT, BOTTOM);
+    let magText = '|' + nf(info.magnitude, 0, 1) + ' N';
+    text(magText, info.point.x + 8, info.point.y - 6);
+  }
+
+  pop();
+}
+
+function drawArrow(base, vec, strokeColor, label) {
+  push();
+  stroke(strokeColor);
+  if (typeof strokeColor === 'string') stroke(strokeColor);
+  strokeWeight(3);
+  fill(strokeColor);
+  // line
+  line(base.x, base.y, base.x + vec.x, base.y + vec.y);
+  // head
+  let head = p5.Vector.add(base, vec);
+  push();
+  translate(head.x, head.y);
+  let ang = atan2(vec.y, vec.x);
+  rotate(ang);
+  // triangle arrow head
+  triangle(0,0, -8,4, -8,-4);
+  pop();
+
+  // label if requested
+  if (label) {
+    noStroke();
+    fill(0);
+    textSize(12);
+    textAlign(LEFT, TOP);
+    text(label, base.x + vec.x + 6, base.y + vec.y + 6);
+  }
+  pop();
+}
+
+function circleRectCollision(cx, cy, r, rect) {
+  // find closest point
+  let closest = createVector(constrain(cx, rect.x, rect.x+rect.w), constrain(cy, rect.y, rect.y+rect.h));
+  let d = dist(cx, cy, closest.x, closest.y);
+  return d <= r + 0.01;
+}
+
+function closestPointOnRect(circleCenter, rect) {
+  return createVector(constrain(circleCenter.x, rect.x, rect.x+rect.w), constrain(circleCenter.y, rect.y, rect.y+rect.h));
+}
+
+function keepStoneOnSlope() {
+  // constrain stone so it stays near the slope line (project onto the line)
+  let a = slopeStart;
+  let b = slopePointAt(1);
+  let ap = p5.Vector.sub(stone.pos, a);
+  let ab = p5.Vector.sub(b, a).normalize();
+  let proj = ab.mult(ap.dot(ab));
+  let foot = p5.Vector.add(a, proj);
+  // keep stone near foot perpendicular within some offset
+  let perp = p5.Vector.sub(stone.pos, foot);
+  if (perp.mag() > 120) {
+    perp.setMag(120);
+    stone.pos = p5.Vector.add(foot, perp);
+  }
+}
+
+function drawHUD() {
+  noStroke();
+  fill(20);
+  textSize(13);
+  textAlign(LEFT, TOP);
+  text('Controls: Click to reset stone to top. Drag man horizontally to reposition him downhill.', 12, 8);
+  text('Blue = reaction on stone (by man). Red = action on man (by stone). Orange = velocity. Purple = momentum (p=mv).', 12, 26);
+  // stone numbers
+  text('Stone speed: ' + nf(stone.vel.mag(), 1, 2) + ' px/s', 12, 56);
+  text('Stone mass: ' + nf(stone.mass, 1, 2) + ' kg', 12, 74);
+
+  // draw man rectangle boundary for debugging
+  noFill();
+  stroke(0,0,0,40);
+  rect(man.rect.x, man.rect.y, man.rect.w, man.rect.h);
+}
+
+function mousePressed() {
+  // reset stone to top if clicking left side text
+  if (mouseX < 200 && mouseY < 100) {
+    resetStone();
+  }
+  // or start dragging man
+  if (mouseX > man.rect.x && mouseX < man.rect.x + man.rect.w && mouseY > man.rect.y && mouseY < man.rect.y + man.rect.h) {
+    draggingMan = true;
+    dragOffset = createVector(mouseX - man.base.x, mouseY - man.base.y);
+  }
+}
+
+let draggingMan = false;
+let dragOffset = null;
+function mouseDragged() {
+  if (draggingMan) {
+    man.base.x = mouseX - (dragOffset ? dragOffset.x : 0);
+    man.base.y = mouseY - (dragOffset ? dragOffset.y : 0);
+    updateManRect();
+  }
+}
+
+function mouseReleased() {
+  draggingMan = false;
+}
+
+function resetStone() {
+  let x0 = slopeStart.x + 40;
+  let y0 = slopeStart.y + tan(slopeAngle) * 40;
+  stone.pos.set(x0, y0);
+  stone.vel.set(0,0);
+  stone.acc.set(0,0);
+}
+
+// convenience: resize canvas and keep positions
+function windowResized() {
+  // keep fixed size for now
+}

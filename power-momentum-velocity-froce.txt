@@ -1,0 +1,131 @@
+// p5.js sketch: Meshed gears with force, velocity, and momentum vectors + power calculation
+
+let angleA = 0;
+let angleB = 0;
+let speedSlider;
+let ratio;
+let blinkTimer = 0;
+let fixedVectorAngle = 0; // fixed tooth position for red gear
+let showAllVectors = false; // toggle state
+let toggleButton;
+
+let gearA = { teeth: 18, radius: 50, color: 'red' };
+let gearB = { teeth: 42, radius: 120, color: 'green' };
+
+// Force and mass constants
+let baseForce = 5;  // arbitrary constant force magnitude (N)
+let massPerTooth = 0.05; // kg for each tooth segment
+
+function setup() {
+  createCanvas(900, 650);
+  angleMode(RADIANS);
+
+  // Slider for motor angular speed
+  speedSlider = createSlider(-0.1, 0.1, 0.02, 0.001);
+  speedSlider.position(20, height - 40);
+
+  // Toggle button for force vectors
+  toggleButton = createButton('Toggle Vectors');
+  toggleButton.position(20, height - 70);
+  toggleButton.mousePressed(() => {
+    showAllVectors = !showAllVectors;
+  });
+
+  ratio = gearA.teeth / gearB.teeth;
+}
+
+function draw() {
+  background(245);
+  translate(width / 2, height / 2);
+
+  let motorSpeed = speedSlider.value();
+  angleA += motorSpeed;
+  angleB -= motorSpeed * ratio;
+
+  blinkTimer += 0.05;
+  let blink = sin(blinkTimer) > 0;
+
+  let fixedIndexA = floor(map(fixedVectorAngle, 0, TWO_PI, 0, gearA.teeth));
+  let meshIndexB = getMeshToothIndex(angleB, gearB.teeth);
+
+  // Display current power output
+  let tangentialVelocity = motorSpeed * gearA.radius;
+  let power = baseForce * abs(tangentialVelocity);
+  noStroke();
+  fill(50);
+  textSize(16);
+  textAlign(LEFT, TOP);
+  text(`Power = Force × Velocity = ${power.toFixed(2)} W`, -width / 2 + 20, -height / 2 + 20);
+
+  // Draw green gear (B)
+  push();
+  rotate(angleB);
+  drawGear(gearB.radius, gearB.teeth, gearB.color, false, blink, meshIndexB, motorSpeed, false);
+  pop();
+
+  // Draw red gear (A) with vectors
+  push();
+  translate(-(gearA.radius + gearB.radius), 0);
+  rotate(angleA);
+  drawGear(gearA.radius, gearA.teeth, gearA.color, true, false, fixedIndexA, motorSpeed, true);
+  pop();
+}
+
+function drawGear(r, teeth, col, showVectors, highlight, fixedIndex, angularSpeed, isRed) {
+  stroke(0);
+  strokeWeight(1);
+  beginShape();
+  for (let i = 0; i < teeth; i++) {
+    let angle = map(i, 0, teeth, 0, TWO_PI);
+    let x1 = cos(angle) * (r + 10);
+    let y1 = sin(angle) * (r + 10);
+    let x2 = cos(angle + TWO_PI / (2 * teeth)) * r;
+    let y2 = sin(angle + TWO_PI / (2 * teeth)) * r;
+
+    fill(highlight && i === fixedIndex ? 'pink' : col);
+    vertex(x1, y1);
+    vertex(x2, y2);
+  }
+  endShape(CLOSE);
+
+  // Center hole
+  fill(240);
+  ellipse(0, 0, r * 0.4);
+
+  if (showVectors) {
+    for (let i = 0; i < teeth; i++) {
+      if (!showAllVectors && i !== fixedIndex) continue;
+
+      let angle = map(i, 0, teeth, 0, TWO_PI);
+      let tx = cos(angle) * (r + 10);
+      let ty = sin(angle) * (r + 10);
+
+      // Velocity direction (tangent)
+      let velocityVector = createVector(-sin(angle), cos(angle)).mult(angularSpeed * r * 50);
+
+      // Force (normal, pointing outward)
+      let forceVector = createVector(-sin(angle), cos(angle)).rotate(HALF_PI).mult(baseForce * 5);
+
+      // Momentum = mass * velocity
+      let momentumVector = velocityVector.copy().mult(massPerTooth);
+
+      // Draw velocity (green)
+      stroke('green');
+      strokeWeight(2);
+      line(tx, ty, tx + velocityVector.x, ty + velocityVector.y);
+
+      // Draw force (blue)
+      stroke('blue');
+      line(tx, ty, tx + forceVector.x, ty + forceVector.y);
+
+      // Draw momentum (purple)
+      stroke('purple');
+      line(tx, ty, tx + momentumVector.x, ty + momentumVector.y);
+    }
+  }
+}
+
+function getMeshToothIndex(angle, teeth) {
+  let normalized = ((angle % TWO_PI) + TWO_PI) % TWO_PI;
+  return floor(map(normalized, 0, TWO_PI, 0, teeth));
+}

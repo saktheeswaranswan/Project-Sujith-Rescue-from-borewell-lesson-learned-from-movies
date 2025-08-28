@@ -1,0 +1,352 @@
+// p5.js sketch: circular stone rolling down a slope, stopped by man's hands
+// Updated: Shows resultant force vector (green) and X,Y basis vectors (gray) when in contact.
+
+let slopeAngle; 
+let slopeStart, slopeLength;
+let slopeDir;
+let stone;
+let man;
+let g = 9.81;
+let pxPerMeter = 40;
+
+function setup() {
+  createCanvas(1000, 520);
+  angleMode(RADIANS);
+  textFont('Georgia');
+
+  slopeAngle = radians(18);
+  slopeStart = createVector(120, 110);
+  slopeLength = 720;
+  slopeDir = createVector(cos(slopeAngle), sin(slopeAngle)).normalize();
+
+  stone = {
+    s: 0.2,
+    radius_m: 0.28,
+    mass: 6.0,
+    v: 0.0,
+    friction_coeff: 0.18,
+    restitution: 0.15,
+    contactInfo: null
+  };
+
+  let slopeEnd = slopePointAt(0.92);
+  man = {
+    base: slopeEnd.copy().add(40, 36),
+    width: 58,
+    height: 140,
+    leftHandRel: createVector(-40, -40),
+    rightHandRel: createVector(40, -40),
+    handRadius_m: 0.06,
+    isDragging: false,
+    draggingPart: null,
+    dragOffset: null
+  };
+}
+
+function slopePointAt(t) {
+  return createVector(
+    slopeStart.x + slopeDir.x * slopeLength * t,
+    slopeStart.y + slopeDir.y * slopeLength * t
+  );
+}
+
+function slopePosFromS(s) {
+  return p5.Vector.add(slopeStart, p5.Vector.mult(slopeDir, s * pxPerMeter));
+}
+
+function draw() {
+  background(250);
+  drawSlope();
+  drawHUD();
+  drawMan();
+  physicsStep();
+  drawStone();
+}
+
+function drawSlope() {
+  stroke(70);
+  strokeWeight(2);
+  let a = slopeStart;
+  let b = p5.Vector.add(slopeStart, p5.Vector.mult(slopeDir, slopeLength));
+  line(a.x, a.y, b.x, b.y);
+
+  strokeWeight(1);
+  for (let t = 0; t <= slopeLength; t += 40) {
+    let p = p5.Vector.add(slopeStart, p5.Vector.mult(slopeDir, t));
+    let perp = createVector(-slopeDir.y, slopeDir.x).setMag(7);
+    line(p.x - perp.x, p.y - perp.y, p.x + perp.x, p.y + perp.y);
+  }
+}
+
+function drawStone() {
+  let pos = slopePosFromS(stone.s);
+  let rpx = stone.radius_m * pxPerMeter;
+
+  // stone body
+  push();
+  fill(120);
+  stroke(40);
+  strokeWeight(1);
+  ellipse(pos.x, pos.y, rpx * 2, rpx * 2);
+  pop();
+
+  // velocity (orange)
+  if (abs(stone.v) > 0.0005) {
+    let v_disp = p5.Vector.mult(slopeDir, stone.v * pxPerMeter * 0.6);
+    drawArrow(pos, v_disp, color(255,150,20), 'v');
+  }
+
+  // momentum (purple)
+  let p_val = stone.mass * stone.v;
+  if (abs(p_val) > 0.0005) {
+    let p_disp_len = abs(p_val) * (pxPerMeter * 0.12);
+    let p_disp = p5.Vector.mult(slopeDir, p_disp_len * (p_val < 0 ? -1 : 1));
+    drawArrow(pos, p_disp, color(140, 30, 180), 'p');
+  }
+
+  // Contact vectors
+  if (stone.contactInfo) {
+    let info = stone.contactInfo;
+
+    // Reaction (blue)
+    let force_px_len = map(info.forceN, 0, 2500, 0, 140);
+    let reactVec = p5.Vector.sub(pos, info.handPos).normalize().mult(force_px_len);
+    drawArrow(info.handPos, reactVec, color(30,140,255), 'F_react');
+
+    // Action (red)
+    let actionVec = reactVec.copy().mult(-1);
+    drawArrow(info.handPos, actionVec, color(255,60,60), 'F_action');
+
+    // Resultant (green)
+    let weight = createVector(0, stone.mass * g * pxPerMeter * 0.02);
+    let resultant = p5.Vector.add(actionVec, weight);
+    drawArrow(pos, resultant, color(0,200,0), 'Resultant');
+
+    // X,Y basis (gray)
+    let xAxis = createVector(40, 0);
+    let yAxis = createVector(0, 40);
+    stroke(100);
+    drawArrow(pos, xAxis, color(150), 'X');
+    drawArrow(pos, yAxis, color(150), 'Y');
+
+    // Magnitude text
+    noStroke();
+    fill(0);
+    textSize(13);
+    textAlign(LEFT, BOTTOM);
+    text('|' + nf(info.forceN, 0, 1) + ' N', info.handPos.x + 8, info.handPos.y - 6);
+  }
+}
+
+function drawMan() {
+  let base = man.base.copy();
+  let leftHand = p5.Vector.add(base, man.leftHandRel);
+  let rightHand = p5.Vector.add(base, man.rightHandRel);
+
+  // body
+  noStroke();
+  fill(200, 140, 100);
+  rectMode(CENTER);
+  rect(man.base.x, man.base.y - man.height/2, man.width, man.height);
+
+  // head
+  fill(190, 120, 90);
+  ellipse(man.base.x, man.base.y - man.height - 18, 34, 36);
+  fill(30);
+  arc(man.base.x, man.base.y - man.height - 10, 28, 12, PI, TWO_PI);
+
+  // hands
+  let handRpx = man.handRadius_m * pxPerMeter;
+  fill(220, 180, 140);
+  stroke(0);
+  strokeWeight(1);
+  ellipse(leftHand.x, leftHand.y, handRpx*2);
+  ellipse(rightHand.x, rightHand.y, handRpx*2);
+
+  // arms
+  stroke(180,120,80);
+  strokeWeight(10);
+  let shoulderL = createVector(man.base.x - man.width/3, man.base.y - man.height + 22);
+  let shoulderR = createVector(man.base.x + man.width/3, man.base.y - man.height + 22);
+  line(shoulderL.x, shoulderL.y, leftHand.x, leftHand.y);
+  line(shoulderR.x, shoulderR.y, rightHand.x, rightHand.y);
+
+  // faint grab rectangle
+  noFill();
+  stroke(0,0,0,40);
+  rectMode(CORNER);
+  rect(man.base.x - man.width/2, man.base.y - man.height, man.width, man.height);
+
+  // instruction
+  noStroke();
+  fill(0);
+  textSize(12);
+  textAlign(CENTER);
+  text('Drag body or hands', man.base.x, man.base.y + 18);
+}
+
+function physicsStep() {
+  let a_grav = g * sin(slopeAngle);
+  let a_friction = -stone.friction_coeff * stone.v;
+
+  let pos = slopePosFromS(stone.s);
+  let r_px = stone.radius_m * pxPerMeter;
+
+  let leftHandPos = p5.Vector.add(man.base, man.leftHandRel);
+  let rightHandPos = p5.Vector.add(man.base, man.rightHandRel);
+
+  stone.contactInfo = null;
+  let hands = [
+    { name: 'left', pos: leftHandPos },
+    { name: 'right', pos: rightHandPos }
+  ];
+
+  let contacted = false;
+  for (let h of hands) {
+    let d = p5.Vector.dist(pos, h.pos);
+    let overlap = (r_px + man.handRadius_m * pxPerMeter) - d;
+
+    if (overlap > -0.0001) {
+      contacted = true;
+      let normal = p5.Vector.sub(pos, h.pos);
+      if (normal.mag() === 0) normal = createVector(-slopeDir.y, slopeDir.x);
+      else normal.normalize();
+
+      let v_world_px_s = p5.Vector.mult(slopeDir, stone.v * pxPerMeter);
+      let vRelNormal = v_world_px_s.dot(normal);
+
+      let penetration_m = overlap / pxPerMeter;
+      let k = 15000;
+      let c = 120;
+      let Fmag = max(0, k * penetration_m - c * (vRelNormal / pxPerMeter));
+
+      let F_world = p5.Vector.mult(normal, Fmag);
+      let F_along_slope = F_world.dot(slopeDir);
+      let a_contact = -F_along_slope / stone.mass;
+
+      let dt = 1 / 60.0;
+      stone.v += (a_grav + a_friction + a_contact) * dt;
+      if (abs(stone.v) < 1e-4) stone.v = 0;
+      stone.s += stone.v * dt;
+      stone.s = constrain(stone.s, 0, slopeLength / pxPerMeter);
+
+      if (vRelNormal < 0) {
+        let vn_m_s = vRelNormal / pxPerMeter;
+        let j = -(1 + stone.restitution) * vn_m_s * stone.mass;
+        stone.v += (j / stone.mass) * normal.dot(slopeDir);
+      }
+
+      stone.contactInfo = {
+        hand: h.name,
+        handPos: h.pos.copy(),
+        normal: normal.copy(),
+        forceN: Fmag
+      };
+      break;
+    }
+  }
+
+  if (!contacted) {
+    let dt = 1 / 60.0;
+    stone.v += (a_grav + a_friction) * dt;
+    stone.s += stone.v * dt;
+    stone.s = constrain(stone.s, 0, slopeLength / pxPerMeter);
+  }
+
+  if (stone.s >= slopeLength / pxPerMeter - 0.001) {
+    stone.s = slopeLength / pxPerMeter;
+    stone.v = 0;
+  }
+}
+
+function drawArrow(base, vec, strokeColor, label) {
+  push();
+  stroke(strokeColor);
+  strokeWeight(3);
+  fill(strokeColor);
+  line(base.x, base.y, base.x + vec.x, base.y + vec.y);
+  let head = p5.Vector.add(base, vec);
+  push();
+  translate(head.x, head.y);
+  rotate(atan2(vec.y, vec.x));
+  triangle(0, 0, -10, 6, -10, -6);
+  pop();
+  if (label) {
+    noStroke();
+    fill(0);
+    textSize(12);
+    textAlign(LEFT, TOP);
+    text(label, base.x + vec.x + 6, base.y + vec.y + 6);
+  }
+  pop();
+}
+
+function mousePressed() {
+  if (mouseX < 230 && mouseY < 90) {
+    resetStone();
+    return;
+  }
+  let leftHand = p5.Vector.add(man.base, man.leftHandRel);
+  let rightHand = p5.Vector.add(man.base, man.rightHandRel);
+  let handRpx = man.handRadius_m * pxPerMeter;
+
+  if (dist(mouseX, mouseY, leftHand.x, leftHand.y) < handRpx + 8) {
+    man.isDragging = true;
+    man.draggingPart = 'lhand';
+    man.dragOffset = p5.Vector.sub(leftHand, createVector(mouseX, mouseY));
+    return;
+  }
+  if (dist(mouseX, mouseY, rightHand.x, rightHand.y) < handRpx + 8) {
+    man.isDragging = true;
+    man.draggingPart = 'rhand';
+    man.dragOffset = p5.Vector.sub(rightHand, createVector(mouseX, mouseY));
+    return;
+  }
+  if (mouseX > man.base.x - man.width/2 && mouseX < man.base.x + man.width/2 &&
+      mouseY > man.base.y - man.height && mouseY < man.base.y) {
+    man.isDragging = true;
+    man.draggingPart = 'body';
+    man.dragOffset = p5.Vector.sub(man.base, createVector(mouseX, mouseY));
+  }
+}
+
+function mouseDragged() {
+  if (!man.isDragging) return;
+  if (man.draggingPart === 'body') {
+    man.base = createVector(mouseX + man.dragOffset.x, mouseY + man.dragOffset.y);
+  } else if (man.draggingPart === 'lhand') {
+    let newHand = createVector(mouseX, mouseY).add(man.dragOffset);
+    man.leftHandRel = p5.Vector.sub(newHand, man.base);
+  } else if (man.draggingPart === 'rhand') {
+    let newHand = createVector(mouseX, mouseY).add(man.dragOffset);
+    man.rightHandRel = p5.Vector.sub(newHand, man.base);
+  }
+}
+
+function mouseReleased() {
+  man.isDragging = false;
+  man.draggingPart = null;
+  man.dragOffset = null;
+}
+
+function resetStone() {
+  stone.s = 0.2;
+  stone.v = 0;
+  stone.contactInfo = null;
+}
+
+function drawHUD() {
+  noStroke();
+  fill(10);
+  textSize(13);
+  textAlign(LEFT, TOP);
+  text('Controls: Click this box to reset stone. Drag man body or individual hands to reposition.', 12, 8);
+  text('Blue = reaction, Red = action, Green = resultant, Orange = velocity, Purple = momentum.', 12, 26);
+  let v_display = stone.v;
+  let p_display = stone.mass * stone.v;
+  text('Stone speed: ' + nf(v_display, 1, 2) + ' m/s', 12, 56);
+  text('Stone momentum: ' + nf(p_display, 1, 2) + ' kg·m/s', 12, 74);
+  noFill();
+  stroke(0, 0, 0, 40);
+  rect(8, 8, 440, 72);
+}

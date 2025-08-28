@@ -1,0 +1,191 @@
+// Tug of War Simulation - Horizontal Mechanics v4
+// Red team = Left side, Blue team = Right side
+// Forces auto-assigned randomly (0–100 N) to each player when tug starts
+
+let redTeam = [];
+let blueTeam = [];
+let ropeCenter;
+let pulling = false;
+let inputBoxes = [];
+let startButton;
+
+let ropeLength = 600;   // Rope total length
+let ropeHeight = 300;   // Vertical position of rope
+let ropeSegments = 20;  // Segments for rope animation
+
+let velocity = 0;       // Rope movement velocity
+let mass = 50;          // Effective mass of rope
+let friction = 0.98;    // Friction coefficient for realism
+
+function setup() {
+  createCanvas(1200, 600);
+  ropeCenter = width / 2;
+
+  let spacing = ropeLength / 12;
+
+  // Create members for both teams
+  for (let i = 0; i < 12; i++) {
+    redTeam.push({ x: width / 2 - spacing * (i + 1), y: ropeHeight - 50, force: 0 });
+    blueTeam.push({ x: width / 2 + spacing * (i + 1), y: ropeHeight - 50, force: 0 });
+  }
+
+  // Create input boxes for forces for both teams
+  for (let i = 0; i < 12; i++) {
+    let redInput = createInput('0');
+    redInput.position(50, 80 + i * 30);
+    inputBoxes.push({ team: 'red', id: i, box: redInput });
+
+    let blueInput = createInput('0');
+    blueInput.position(width - 100, 80 + i * 30);
+    inputBoxes.push({ team: 'blue', id: i, box: blueInput });
+  }
+
+  // Start button
+  startButton = createButton('Start Tug');
+  startButton.position(width / 2 - 50, 20);
+  startButton.mousePressed(startTug);
+}
+
+function draw() {
+  background(230);
+
+  // Ground line
+  stroke(120);
+  line(0, ropeHeight + 80, width, ropeHeight + 80);
+
+  // Draw rope and midpoint marker
+  drawRope();
+  drawMidpoint();
+
+  // Draw teams
+  drawTeam(redTeam, color(255, 0, 0), -1);
+  drawTeam(blueTeam, color(0, 0, 255), 1);
+
+  // If tugging is active, simulate rope dynamics
+  if (pulling) simulatePull();
+
+  // Labels
+  fill(0);
+  noStroke();
+  textSize(14);
+  textAlign(LEFT);
+  text("Red Team Forces (N)", 50, 60);
+  textAlign(RIGHT);
+  text("Blue Team Forces (N)", width - 50, 60);
+}
+
+function drawTeam(team, col, dir) {
+  for (let i = 0; i < team.length; i++) {
+    let member = team[i];
+    stroke(col);
+    fill(col);
+
+    // Stickman figure
+    ellipse(member.x, member.y - 40, 20, 20); // head
+    line(member.x, member.y - 30, member.x, member.y); // body
+    line(member.x, member.y - 20, member.x + dir * 20, member.y - 20); // arms
+    line(member.x, member.y, member.x - 10, member.y + 20); // left leg
+    line(member.x, member.y, member.x + 10, member.y + 20); // right leg
+
+    // Player number
+    fill(0);
+    noStroke();
+    textAlign(CENTER);
+    text(i + 1, member.x, member.y - 55);
+
+    // Force arrow
+    if (member.force > 0) {
+      stroke(col);
+      strokeWeight(2);
+      let len = map(member.force, 0, 100, 0, 100);
+      line(member.x, member.y - 40, member.x + dir * len, member.y - 40);
+      line(member.x + dir * len, member.y - 40,
+           member.x + dir * len - dir * 8, member.y - 45);
+      line(member.x + dir * len, member.y - 40,
+           member.x + dir * len - dir * 8, member.y - 35);
+    }
+  }
+}
+
+function drawRope() {
+  stroke(100, 60, 20);
+  strokeWeight(6);
+  noFill();
+  let startX = ropeCenter - ropeLength / 2;
+  let step = ropeLength / ropeSegments;
+
+  beginShape();
+  for (let i = 0; i <= ropeSegments; i++) {
+    let x = startX + i * step;
+    let y = ropeHeight + sin(frameCount * 0.05 + i * 0.3) * 3; // rope vibration
+    vertex(x, y);
+  }
+  endShape();
+}
+
+function drawMidpoint() {
+  stroke(0);
+  strokeWeight(2);
+  line(width / 2, ropeHeight - 40, width / 2, ropeHeight + 40);
+  noStroke();
+  fill(0);
+  textAlign(CENTER);
+  textSize(16);
+  text("Midpoint", width / 2, ropeHeight - 50);
+}
+
+function startTug() {
+  // Assign random forces for each player in both teams (0–100 N)
+  for (let input of inputBoxes) {
+    let randomForce = floor(random(0, 101));
+    input.box.value(randomForce);
+    if (input.team === 'red') {
+      redTeam[input.id].force = randomForce;
+    } else {
+      blueTeam[input.id].force = randomForce;
+    }
+  }
+
+  // Reset rope state and start
+  ropeCenter = width / 2;
+  velocity = 0;
+  pulling = true;
+}
+
+function simulatePull() {
+  // Sum forces
+  let redForce = redTeam.reduce((sum, m) => sum + m.force, 0);
+  let blueForce = blueTeam.reduce((sum, m) => sum + m.force, 0);
+  let netForce = blueForce - redForce;
+
+  // Rope dynamics
+  let acceleration = netForce / mass;
+  velocity += acceleration;
+  velocity *= friction;
+  ropeCenter += velocity;
+
+  // Constrain rope movement
+  ropeCenter = constrain(ropeCenter, 200, width - 200);
+
+  // Display results
+  fill(0);
+  noStroke();
+  textSize(20);
+  textAlign(CENTER);
+  text(`Red Force: ${redForce} N`, width / 2 - 200, height - 20);
+  text(`Blue Force: ${blueForce} N`, width / 2 + 200, height - 20);
+  text(`Net Force: ${netForce} N`, width / 2, height - 50);
+
+  // Check win condition
+  if (ropeCenter <= 220) {
+    pulling = false;
+    textSize(32);
+    fill(255, 0, 0);
+    text("RED TEAM WINS!", width / 2, height / 2);
+  } else if (ropeCenter >= width - 220) {
+    pulling = false;
+    textSize(32);
+    fill(0, 0, 255);
+    text("BLUE TEAM WINS!", width / 2, height / 2);
+  }
+}

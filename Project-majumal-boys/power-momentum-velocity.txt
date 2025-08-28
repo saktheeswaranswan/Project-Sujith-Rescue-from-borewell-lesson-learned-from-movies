@@ -1,0 +1,86 @@
+// p5.js sketch: Two meshed gears with fixed force vector
+let angleA = 0;
+let angleB = 0;
+let speedSlider;
+let ratio;
+let blinkTimer = 0;
+let fixedVectorAngle = 0; // Declare before using
+
+let gearA = { teeth: 18, radius: 50, color: 'red' };
+let gearB = { teeth: 42, radius: 120, color: 'green' };
+
+function setup() {
+  createCanvas(800, 600);
+  angleMode(RADIANS);
+  speedSlider = createSlider(-0.1, 0.1, 0.02, 0.001);
+  speedSlider.position(20, height - 40);
+  ratio = gearA.teeth / gearB.teeth;
+}
+
+function draw() {
+  background(240);
+  translate(width / 2, height / 2);
+
+  let motorSpeed = speedSlider.value();
+  angleA += motorSpeed;
+  angleB -= motorSpeed * ratio;
+
+  // Keep blink consistent
+  blinkTimer += 0.05;
+  let blink = sin(blinkTimer) > 0;
+
+  // Fixed vector position on red gear
+  let fixedIndexA = floor(map(fixedVectorAngle, 0, TWO_PI, 0, gearA.teeth));
+  let meshIndexB = getMeshToothIndex(angleB, gearB.teeth);
+
+  // Draw green gear (with blinking pink)
+  push();
+  rotate(angleB);
+  drawGear(gearB.radius, gearB.teeth, gearB.color, false, blink, meshIndexB);
+  pop();
+
+  // Draw red gear (with fixed blue vector)
+  push();
+  translate(-(gearA.radius + gearB.radius), 0);
+  rotate(angleA);
+  drawGear(gearA.radius, gearA.teeth, gearA.color, true, false, fixedIndexA);
+  pop();
+}
+
+function drawGear(r, teeth, col, showVector, highlight, meshIndex) {
+  stroke(0);
+  strokeWeight(1);
+  beginShape();
+  for (let i = 0; i < teeth; i++) {
+    let angle = map(i, 0, teeth, 0, TWO_PI);
+    let x1 = cos(angle) * (r + 10);
+    let y1 = sin(angle) * (r + 10);
+    let x2 = cos(angle + TWO_PI / (2 * teeth)) * r;
+    let y2 = sin(angle + TWO_PI / (2 * teeth)) * r;
+
+    fill(highlight && i === meshIndex ? 'pink' : col);
+    vertex(x1, y1);
+    vertex(x2, y2);
+  }
+  endShape(CLOSE);
+
+  // Center hole
+  fill(240);
+  ellipse(0, 0, r * 0.4);
+
+  // Fixed vector on red gear
+  if (showVector && meshIndex !== undefined) {
+    stroke('blue');
+    strokeWeight(2);
+    let angle = map(meshIndex, 0, teeth, 0, TWO_PI);
+    let tx = cos(angle) * (r + 10);
+    let ty = sin(angle) * (r + 10);
+    let normal = createVector(-sin(angle), cos(angle)).mult(20);
+    line(tx, ty, tx + normal.x, ty + normal.y);
+  }
+}
+
+function getMeshToothIndex(angle, teeth) {
+  let normalized = ((angle % TWO_PI) + TWO_PI) % TWO_PI;
+  return floor(map(normalized, 0, TWO_PI, 0, teeth));
+}
